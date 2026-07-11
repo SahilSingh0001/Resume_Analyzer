@@ -68,8 +68,6 @@ JOB_DESCRIPTIONS = {
 
 # Load spaCy model
 import spacy
-import subprocess
-import sys
 import streamlit as st
 
 @st.cache_resource
