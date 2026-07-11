@@ -1,6 +1,5 @@
 import streamlit as st
 import PyPDF2
-import spacy
 import re
 import pandas as pd
 import numpy as np
@@ -66,16 +65,8 @@ JOB_DESCRIPTIONS = {
     'AI Engineer': 'Required skills: Python, Machine Learning, Deep Learning, NLP, Computer Vision, TensorFlow, PyTorch, Neural Networks, Mathematics, Statistics'
 }
 
-# Load spaCy model
-import spacy
-import streamlit as st
-
-@st.cache_resource
-def load_nlp_model():
-    return spacy.load("en_core_web_sm")
-
-# Functions
 def extract_text_from_pdf(pdf_file):
+    """Extract text from PDF file"""
     try:
         text = ""
         pdf_reader = PyPDF2.PdfReader(pdf_file)
@@ -86,6 +77,7 @@ def extract_text_from_pdf(pdf_file):
         return f"Error: {str(e)}"
 
 def extract_skills(resume_text):
+    """Extract skills from resume using keyword matching"""
     resume_text_lower = resume_text.lower()
     found_skills = {category: [] for category in SKILLS_DB.keys()}
     all_found_skills = []
@@ -96,37 +88,64 @@ def extract_skills(resume_text):
                 found_skills[category].append(skill.title())
                 all_found_skills.append(skill.title())
     
-    doc = nlp(resume_text)
+    # Extract education using regex patterns
+    education_patterns = [
+        r'([A-Z][a-z]+ (?:University|College|Institute|School))',
+        r'((?:University|College|Institute) of [A-Z][a-z]+)',
+        r'(B\.(?:Tech|Sc|E|A)\.?)',
+        r'(M\.(?:Tech|Sc|E|A|B\.A)\.?)',
+        r'(B\.?Tech in [A-Za-z\s]+)',
+        r'(M\.?Tech in [A-Za-z\s]+)',
+    ]
+    
     education = []
-    for ent in doc.ents:
-        if ent.label_ in ['ORG', 'FACILITY']:
-            if any(keyword in ent.text.lower() for keyword in ['university', 'college', 'institute', 'school']):
-                education.append(ent.text)
+    for pattern in education_patterns:
+        matches = re.findall(pattern, resume_text)
+        education.extend(matches)
     
-    experience_years = re.findall(r'(\d+)\+?\s*(?:years?|yrs?)', resume_text_lower)
-    max_experience = max([int(y) for y in experience_years]) if experience_years else 0
+    # Remove duplicates
+    education = list(set(education))
     
-    return found_skills, all_found_skills, list(set(education)), max_experience
+    # Extract years of experience
+    experience_patterns = [
+        r'(\d+)\+?\s*(?:years?|yrs?)',
+        r'(\d+)\+?\s*years?\s*of\s*experience',
+        r'experience[:\s]+(\d+)\+?\s*years?',
+    ]
+    
+    max_experience = 0
+    for pattern in experience_patterns:
+        matches = re.findall(pattern, resume_text_lower)
+        if matches:
+            years = [int(m) for m in matches]
+            max_experience = max(max_experience, max(years))
+    
+    return found_skills, all_found_skills, education, max_experience
 
 def calculate_resume_score(resume_text, job_description=None):
+    """Calculate resume score based on various factors"""
     score = 0
     scoring_details = {}
     
     found_skills, all_skills, education, experience = extract_skills(resume_text)
     total_skills_found = len(all_skills)
     
+    # Skills score (0-40)
     skill_score = min(total_skills_found * 3, 40)
     score += skill_score
     scoring_details['Skills'] = f"{skill_score}/40"
     
+    # Education score (0-20)
     education_score = min(len(education) * 10, 20)
     score += education_score
     scoring_details['Education'] = f"{education_score}/20"
     
+    # Experience score (0-20)
     experience_score = min(experience * 4, 20)
     score += experience_score
     scoring_details['Experience'] = f"{experience_score}/20"
     
+    # Content quality score (0-20)
     word_count = len(resume_text.split())
     if word_count >= 300:
         content_score = 20
@@ -139,6 +158,7 @@ def calculate_resume_score(resume_text, job_description=None):
     score += content_score
     scoring_details['Content Quality'] = f"{content_score}/20"
     
+    # Job match score
     job_match_score = 0
     if job_description:
         job_match_score = calculate_job_match(resume_text, job_description)
@@ -154,13 +174,18 @@ def calculate_resume_score(resume_text, job_description=None):
     }
 
 def calculate_job_match(resume_text, job_description):
-    vectorizer = TfidfVectorizer(stop_words='english', max_features=1000)
-    documents = [resume_text.lower(), job_description.lower()]
-    tfidf_matrix = vectorizer.fit_transform(documents)
-    similarity = cosine_similarity(tfidf_matrix[0:1], tfidf_matrix[1:2])[0][0]
-    return round(similarity * 100, 2)
+    """Calculate job match using TF-IDF and cosine similarity"""
+    try:
+        vectorizer = TfidfVectorizer(stop_words='english', max_features=1000)
+        documents = [resume_text.lower(), job_description.lower()]
+        tfidf_matrix = vectorizer.fit_transform(documents)
+        similarity = cosine_similarity(tfidf_matrix[0:1], tfidf_matrix[1:2])[0][0]
+        return round(similarity * 100, 2)
+    except:
+        return 0
 
 def find_best_job_match(resume_text):
+    """Find best matching job roles"""
     job_scores = {}
     for job_title, job_desc in JOB_DESCRIPTIONS.items():
         match_score = calculate_job_match(resume_text, job_desc)
@@ -168,43 +193,53 @@ def find_best_job_match(resume_text):
     return sorted(job_scores.items(), key=lambda x: x[1], reverse=True)
 
 def generate_improvements(resume_text, score_details, skills_found):
+    """Generate improvement suggestions"""
     suggestions = []
     
     word_count = len(resume_text.split())
     if word_count < 300:
         suggestions.append("📝 Add more content to your resume. Aim for at least 300 words.")
     
-    if len([cat for cat, skills in SKILLS_DB.items() if any(s.lower() in resume_text.lower() for s in skills)]) < 3:
-        suggestions.append("💡 Add more technical skills from different categories.")
+    skill_categories_found = [cat for cat, skills in SKILLS_DB.items() 
+                             if any(s.lower() in resume_text.lower() for s in skills)]
+    if len(skill_categories_found) < 3:
+        suggestions.append(" Add more technical skills from different categories (Programming, Cloud, Databases, etc.)")
     
     if not score_details.get('Education', '').startswith('20'):
-        suggestions.append(" Clearly mention your educational background.")
+        suggestions.append("🎓 Clearly mention your educational background and institutions.")
     
     if not score_details.get('Experience', '').startswith('20'):
-        suggestions.append("💼 Add work experience details with duration.")
+        suggestions.append("💼 Add work experience details with duration and responsibilities.")
     
     action_verbs = ['developed', 'created', 'managed', 'led', 'implemented', 'designed', 'built', 'optimized']
-    if not any(verb in resume_text.lower() for verb in action_verbs):
-        suggestions.append("✍️ Use action verbs to describe your achievements.")
+    has_action_verbs = any(verb in resume_text.lower() for verb in action_verbs)
+    if not has_action_verbs:
+        suggestions.append("✍️ Use action verbs to describe your achievements (e.g., 'Developed', 'Led', 'Implemented').")
     
     if not re.search(r'\d+%', resume_text) and not re.search(r'\$\d+', resume_text):
-        suggestions.append("📊 Add quantifiable achievements (e.g., 'Improved performance by 30%').")
+        suggestions.append(" Add quantifiable achievements (e.g., 'Improved performance by 30%', 'Managed $50K budget').")
+    
+    if 'python' not in [s.lower() for s in skills_found]:
+        suggestions.append("🐍 Consider learning Python - it's highly sought after in the industry.")
+    
+    if 'git' not in [s.lower() for s in skills_found]:
+        suggestions.append("🔧 Add version control experience (Git/GitHub) to your resume.")
     
     if not suggestions:
-        suggestions.append("✅ Your resume looks good! Consider adding more specific achievements.")
+        suggestions.append("✅ Your resume looks good! Consider adding more specific achievements and metrics.")
     
     return suggestions
 
 # Main App
 def main():
     # Header
-    st.markdown('<h1 class="main-header"> AI Resume Analyzer</h1>', unsafe_allow_html=True)
+    st.markdown('<h1 class="main-header">📄 AI Resume Analyzer</h1>', unsafe_allow_html=True)
     st.markdown("### Upload your resume and get instant AI-powered feedback!")
     st.markdown("---")
     
     # Sidebar
     with st.sidebar:
-        st.header("⚙️ Settings")
+        st.header("️ Settings")
         target_job = st.selectbox(
             "Select Target Job Role (Optional)",
             ["None"] + list(JOB_DESCRIPTIONS.keys())
@@ -260,7 +295,6 @@ def main():
                 # Overall Score
                 score = score_result['total_score']
                 
-                # Color based on score
                 if score >= 80:
                     score_color = "#4CAF50"
                     score_emoji = "🏆"
@@ -269,7 +303,7 @@ def main():
                     score_emoji = "👍"
                 else:
                     score_color = "#f44336"
-                    score_emoji = "📝"
+                    score_emoji = ""
                 
                 st.markdown(f"""
                     <div class="score-box">
@@ -291,7 +325,7 @@ def main():
                 
                 # Skills by category
                 st.markdown("---")
-                st.subheader("️ Skills Extracted")
+                st.subheader(" Skills Extracted")
                 
                 for category, skills in found_skills.items():
                     if skills:
@@ -300,24 +334,14 @@ def main():
                         st.markdown(skills_html, unsafe_allow_html=True)
                         st.markdown("")
                 
+                if not any(found_skills.values()):
+                    st.warning("️ No skills detected. Make sure your resume clearly lists your technical skills.")
+                
                 # Job matching
                 st.markdown("---")
-                st.subheader(" Job Role Matching")
+                st.subheader("🎯 Job Role Matching")
                 
-                job_df = pd.DataFrame(job_matches, columns=['Job Role', 'Match Score (%)'])
-                
-                # Create progress bars
-                for idx, row in job_df.iterrows():
-                    job_name = row['Job Role']
-                    match_score = row['Match Score (%)']
-                    
-                    if match_score >= 70:
-                        bar_color = "#4CAF50"
-                    elif match_score >= 50:
-                        bar_color = "#FF9800"
-                    else:
-                        bar_color = "#f44336"
-                    
+                for job_name, match_score in job_matches:
                     st.markdown(f"**{job_name}**")
                     st.progress(match_score / 100)
                     st.caption(f"Match: {match_score}%")
@@ -378,7 +402,7 @@ DETAILED BREAKDOWN:
         st.markdown("---")
         st.info(" Upload a PDF resume to get started!")
         
-        st.markdown("###  Features:")
+        st.markdown("### ✨ Features:")
         col1, col2, col3 = st.columns(3)
         
         with col1:
@@ -406,5 +430,4 @@ DETAILED BREAKDOWN:
             """)
 
 if __name__ == "__main__":
-    nlp = load_nlp_model()
     main()
