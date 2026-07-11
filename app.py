@@ -74,14 +74,7 @@ import streamlit as st
 
 @st.cache_resource
 def load_nlp_model():
-    try:
-        return spacy.load("en_core_web_sm")
-    except OSError:
-        subprocess.run(
-            [sys.executable, "-m", "spacy", "download", "en_core_web_sm"],
-            check=True
-        )
-        return spacy.load("en_core_web_sm")
+    return spacy.load("en_core_web_sm")
 
 # Functions
 def extract_text_from_pdf(pdf_file):
